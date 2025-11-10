@@ -21,7 +21,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define VERSION "0.2.2"
+#define VERSION "0.2.8"
 
 //#define DEBUG
 #define LONG64B
@@ -106,6 +106,7 @@ enum {
     ASM_ERR_LINESTOP,
     ASM_ERR_SYNTAX,
     ASM_ERR_EMIT,
+    ASM_ERR_NOTYET,
     ASM_NUMERRORS
 };
 
@@ -382,6 +383,7 @@ struct {
     bool listmacro;
     bool listunused;
     bool cutatip;
+    bool sfirsterr;
 } state;
 
 typedef struct {
@@ -538,7 +540,7 @@ static char get_token()
     }
 
     // is it just a number?
-    if (isdigit(*state.pos) || (*state.pos == '-' && isdigit(*(state.pos+1)))) {
+    if (isdigit(*state.pos)) {
         // get a whole numeric value
         char* end = NULL;
         state.next_tok = numconvert(state.pos,&end,&state.next_val,&state.next_flt);
@@ -744,9 +746,31 @@ static asm_term unary_op()
     return val;
 }
 
-static inline int asm_numeric_token(char* tok, LOCTYPE* arg, bool* isfloat)
+static inline int expression_wrap(const char* start, LOCTYPE* out, bool* isfloat)
+{
+    if (isfloat) *isfloat = false;
+    init_parser(start);
+    asm_term res = expression(0);
+    switch (res.t) {
+    case 1:
+        *out = res.v.u;
+        break;
+    case 2:
+        *out = 0;
+        memcpy(out,&res.v.f,sizeof(float));
+        if (isfloat) *isfloat = true;
+        break;
+    default:
+        error("Expression calculation error - type inference failed");
+        return ASM_ERR_SYNTAX;
+    }
+    return ASM_OK;
+}
+
+static inline int asm_numeric_token(const char* tok, LOCTYPE* arg, bool* isfloat)
 {
     float vf = 0;
+    if (isfloat) *isfloat = false;
     char x = numconvert(tok,NULL,arg,&vf);
     if (!x) {
         error("Error converting argument '%s' to a number",tok);
@@ -761,6 +785,31 @@ static inline int asm_numeric_token(char* tok, LOCTYPE* arg, bool* isfloat)
     }
 
     return ASM_OK;
+}
+
+static int asm_value_field(const char* tok, LOCTYPE* val, bool* isfloat, bool imm)
+{
+    int r = ASM_OK;
+
+    if (isdigit(tok[0]) || tok[0] == '-') {
+        // looks like a number
+        r = asm_numeric_token(tok,val,isfloat);
+
+    } else if (tok[0] == '\'') {
+        // it's a character literal
+        *val = tok[1];
+
+    } else if (imm && tok[0] == '!') {
+        // it's an expression
+        r = expression_wrap(tok+1,val,isfloat);
+
+    } else {
+        // perhaps it's a name (or an expression for evaluating later)
+        LOCTYPE* ptr = resolve_label(tok,false,isfloat);
+        if (ptr) *val = *ptr;
+        else r = ASM_ERR_NOTYET; // not yet known, not always an error
+    }
+    return r;
 }
 
 static void emit_memcopy(void* buf, LOCTYPE len)
@@ -822,7 +871,13 @@ static bool emit_string(int offset)
             case '\\':
             case '"': emit_byte(*ptr); break;
             case 'n': emit_byte('\n'); break;
+            case 'r': emit_byte('\r'); break;
+            case 'e': emit_byte('\e'); break;
+            case 't': emit_byte('\t'); break;
             case '0': emit_byte(0); break;
+            default:
+                error("Unable to parse string, escaped character '%c' is not suppoorted",*ptr);
+                return false;
             }
         } else if (*ptr == '"') break;
         else emit_byte(*ptr);
@@ -841,8 +896,9 @@ static int process_line(char* instring)
     int nargs = 0;
     int curarg = 0;
     int width = 0;
+    int res = 0;
     char* macro_name = NULL;
-    LOCTYPE* arg_label[ASSEMBLY_MAXARGS] = {0};
+    //LOCTYPE* arg_label[ASSEMBLY_MAXARGS] = {0};
     LOCTYPE arg_value[ASSEMBLY_MAXARGS] = {0};
     bool repeat = false;
     bool nocode = false;
@@ -961,7 +1017,7 @@ static int process_line(char* instring)
             nargs = 1;
             fsm = ASM_STATE_ARG;
             // data markers may have an optional name
-            if (!isdigit(*tok) && *tok != '-' && *tok != '!') {
+            if (!isdigit(*tok) && *tok != '-' && *tok != '!' && *tok != '"') { // exclude numbers, expressions, and strings
                 add_label(state.ip,tok,0,false,false,false);
                 break;
             }
@@ -1006,28 +1062,17 @@ static int process_line(char* instring)
             }
             if (stringarg) break;
 
-            // if current token is a label
-            arg_label[curarg] = resolve_label(tok,false,NULL);
-            if (arg_label[curarg]) {
-                curarg++;
-                break;
-            }
-
-            // should be either a number, or a name now
-            if (isdigit(tok[0]) || tok[0] == '-') {
-                // looks like a number
-                int r = asm_numeric_token(tok,arg_value+curarg,NULL);
-                if (r) return r;
-
-            } else if (tok[0] == '\'') {
-                // it's a character literal
-                arg_value[curarg] = tok[1];
-
-            } else {
-                // it's a name, add it to the 'pending' pool
+            // get the value
+            res = asm_value_field(tok,arg_value+curarg,NULL,false);
+            if (res == ASM_ERR_NOTYET) {
+                // it's a yet-unkown name, add it to the 'pending' pool
                 arg_value[curarg] = 0;
                 if (dat >= 0) add_label(state.ip,tok,width,false,true,false);
                 else add_label(state.ip + sizeof(bytecode) + curarg * MACHINE_ARGFIELD,tok,MACHINE_ARGFIELD,false,true,false);
+
+            } else if (res != ASM_OK) {
+                error("Unknown value/name '%s'",tok);
+                return res;
             }
 
             curarg++;
@@ -1044,35 +1089,10 @@ static int process_line(char* instring)
             // (i.e., macros == named constants). Another difference is macro arguments should be
             // calculated immediately, as they could not be postponed (they have no memory area)
             bool flt = false;
-            if (*tok == '!') {
-                // it's an expression
-                init_parser(tok+1);
-                asm_term res = expression(0);
-                switch (res.t) {
-                case 1: arg_value[curarg] = res.v.u; break;
-                case 2:
-                    arg_value[curarg] = 0;
-                    memcpy(arg_value+curarg,&res.v.f,sizeof(float));
-                    flt = true;
-                    break;
-                default:
-                    error("Expression calculation error - type inference failed");
-                    return ASM_ERR_SYNTAX;
-                }
-
-            } else if ((!isdigit(*tok)) && *tok != '-') {
-                // it's another macro or label name
-                arg_label[curarg] = resolve_label(tok,false,NULL);
-                if (!arg_label[curarg]) {
-                    error("Unknown label/macro name '%s' used in macro body",tok);
-                    return ASM_ERR_NOLABEL;
-                }
-                arg_value[curarg] = *(arg_label[curarg]);
-
-            } else {
-                // it's just a number
-                int r = asm_numeric_token(tok,arg_value+curarg,&flt);
-                if (r) return r;
+            res = asm_value_field(tok,arg_value+curarg,&flt,true);
+            if (res != ASM_OK) {
+                error("Unknown value/name '%s'",tok);
+                return res;
             }
             add_label(arg_value[curarg],macro_name,0,true,false,flt);
             done = true;
@@ -1134,7 +1154,7 @@ static int process_line(char* instring)
 
     // emit all arguments
     for (int i = 0; i < nargs; i++) {
-        if (arg_label[i]) arg_value[i] = *(arg_label[i]);
+        //if (arg_label[i]) arg_value[i] = *(arg_label[i]);
         emit_arg(arg_value[i],(dat >= 0)? width : MACHINE_ARGFIELD);
     }
 
@@ -1146,35 +1166,34 @@ static int resolve_pending()
 {
     LOCTYPE oldip = state.ip;
     char* oldpfx = state.prefix;
+    bool nolabel = false;
 
     for (int i = 0; i < state.n_pending; i++) {
         LOCTYPE arg = 0;
         if (state.pending[i].label[0] == '!') {
             // it's an expression
-            init_parser(state.pending[i].label+1);
-            asm_term res = expression(0);
-            switch (res.t) {
-            case 1: arg = res.v.u; break;
-            case 2: arg = 0; memcpy(&arg,&res.v.f,sizeof(float)); break;
-            default:
-                error("Expression calculation error - type inference failed");
-                return ASM_ERR_SYNTAX;
-            }
+            int r = expression_wrap(state.pending[i].label+1,&arg,NULL);
+            if (r) return r;
 
         } else {
             // it's just a label
             state.prefix = state.pending[i].prefix;
             LOCTYPE* parg = resolve_label(state.pending[i].label,false,NULL);
             if (!parg) {
-                error("Unable to resolve label '%s'",state.pending[i].label);
-                return ASM_ERR_NOLABEL;
-            }
-            arg = *parg;
+                asm_label* p = state.pending + i;
+                error("Unable to resolve label '%s' on line %d in namespace %s",p->label,p->line,p->prefix);
+                if (state.sfirsterr) return ASM_ERR_NOLABEL;
+                nolabel = true;
+                state.error = true;
+            } else
+                arg = *parg;
         }
 
         state.ip = state.pending[i].addr;
         emit_arg(arg,state.pending[i].width);
     }
+
+    if (nolabel) return ASM_ERR_NOLABEL;
 
     state.ip = oldip;
     state.prefix = oldpfx;
@@ -1389,7 +1408,7 @@ static LOCTYPE input(int stream)
 
     switch (stream) {
     case MACHINE_IOCHAR:
-        data = getchar(); //FIXME: getchar is blocking until RET, need read() maybe?
+        read(1,(int*)&data,1);
         break;
 
     case MACHINE_IOUINT:
@@ -1677,12 +1696,13 @@ static void usage(const char* prog)
     puts("\t-l - list macros and their computed values");
     puts("\t-u - list unused identifiers");
     puts("\t-c - cut output at last value of IP");
+    puts("\t-S - stop at first error");
 }
 
 int parsearg(int argc, char* argv[])
 {
     int opt;
-    while ((opt = getopt(argc,argv,"i:o:m:edM:WTluc")) != -1) {
+    while ((opt = getopt(argc,argv,"i:o:m:edM:WTlucS")) != -1) {
         switch (opt) {
         case 'i':
             state.fname = optarg;
@@ -1709,6 +1729,7 @@ int parsearg(int argc, char* argv[])
         case 'l': state.listmacro = true; break;
         case 'u': state.listunused = true; break;
         case 'c': state.cutatip = true; break;
+        case 'S': state.sfirsterr = true; break;
 
         default:
             ERR("Unknown switch '%c'",opt);
