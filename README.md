@@ -28,7 +28,7 @@ It targets predictable, low-latency, power-efficient hardware implementations wh
 - [Architecture overview](docs/epia-arch.md)
 - [Complete ISA](docs/epia-isa.md)
 - [Assembler syntax](docs/epia-asm.md)
-- [Full article](https://robotics.syntheva.no/articles/epia-easily-parallel-instruction-architecture)
+- [Full article](https://robotics.syntheva.no/articles/epia)
 
 ---
 
