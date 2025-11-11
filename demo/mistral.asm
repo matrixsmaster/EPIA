@@ -3,7 +3,7 @@
 ;License: MIT
 ; Enjoy at your own risk. You've been warned!
 
-;***GENERATED TABLE for Mistral 0.3 7B
+;***GENERATED TABLE
 #Nheads 32
 #Nkv_heads 8
 #NLayers 32
@@ -17,8 +17,9 @@
 #BOS 1
 #EOS 2
 #TokensTabBytes 509470
+;***END OF TABLE
+
 #BlobStart 0x80000000
-;***
 
 #QK8 32
 #QK8FULL !(QK8+4)
