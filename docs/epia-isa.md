@@ -39,7 +39,7 @@ Z x x x x L G E
 ## Instruction table
 
 | Instruction | Args | Effect | Flags / Exceptions | Notes / Example |
-|---|---:|---|---|---|
+|---|---|---|---|---|
 | `nop` | - | No operation. | - | |
 | `hlt` | - | Halt execution | - | |
 | `mov` | `dest src` | `dest = src` (copy integer bits) | - | `movw dst src` - copy 32-bit word |
@@ -49,7 +49,7 @@ Z x x x x L G E
 | `add` | `dest a b` | `dest = a + b` (integer addition, unsigned arithmetic view) | updates `Z` | `addw R A B` |
 | `adf` | `dest a b` | `dest = a + b` (float add) | updates `Z` (float-zero check) | `adf Fout Fa Fb` |
 | `sub` | `dest a b` | `dest = a - b` (signed integer subtraction) | updates `Z` | For unsigned subtraction use `suu` |
-| `suu` | `dest a b` | `dest = a - b` (unsigned subtraction) | updates `Z` | `suu dst A B` |
+| `suu` | `dest a b` | `dest = a - b` (unsigned subtraction) | updates `Z` | |
 | `suf` | `dest a b` | `dest = a - b` (float subtraction) | updates `Z` | |
 | `neg` | `dest src` | `dest = -src` (signed negate) | updates `Z` | |
 | `ngf` | `dest src` | `dest = -src` (float negate) | updates `Z` | |
@@ -62,22 +62,22 @@ Z x x x x L G E
 | `not` | `dest src` | `dest = ~src` (bitwise NOT) | updates `Z` | |
 | `mul` | `dest a b` | `dest = a * b` (integer multiply, unsigned view) | updates `Z` | Beware overflow semantics (truncation to width) |
 | `muf` | `dest a b` | `dest = a * b` (float multiply) | updates `Z` | |
-| `div` | `dest a b` | `dest = a / b` (signed integer division) | updates `Z`, raises CPU exception on zero divisor | `div dst A B` |
+| `div` | `dest a b` | `dest = a / b` (signed integer division) | updates `Z`, raises CPU exception on zero divisor | |
 | `diu` | `dest a b` | `dest = a / b` (unsigned integer division) | updates `Z`, raises CPU exception on zero divisor | |
 | `mod` | `dest a b` | `dest = a % b` (unsigned modulus) | updates `Z`, raises CPU exception on zero divisor | |
 | `dif` | `dest a b` | `dest = a / b` (float division) | updates `Z`, raises CPU exception on zero divisor | |
 | `ivf` | `dest src` | `dest = 1.0f / src` (float reciprocal) | raises CPU exception on zero divisor | |
-| `abf` | `dest src` | `dest = fabs(src)` (float absolute) | updates `Z` | |
+| `abf` | `dest src` | `dest = fabs(src)` (float absolute value) | updates `Z` | |
 | `sqr` | `dest src` | `dest = sqrt(src)` (float square root) | updates `Z` | |
 | `exp` | `dest src` | `dest = exp(src)` (float exponential) | updates `Z` | |
 | `sin` | `dest src` | `dest = sin(src)` (float sine) | updates `Z` | |
 | `cos` | `dest src` | `dest = cos(src)` (float cosine) | updates `Z` | |
-| `rnf` | `dest src` | `dest = round(src)` (float to nearest) | updates `Z` | |
+| `rnf` | `dest src` | `dest = round(src)` (float round to nearest) | updates `Z` | |
 | `pow` | `dest a b` | `dest = pow(a, b)` (float power) | updates `Z` | |
 | `itf` | `dest src` | `dest = (float)src` - integer-to-float conversion. *Reads* integer of the indicated width, *writes* a 32-bit float | updates `Z` | |
 | `fti` | `dest src` | `dest = (int)src` - float-to-integer conversion. *Reads* a 32-bit float and *writes* an integer using the instruction suffix width (e.g. `ftiw` -> 32-bit int, `fti` -> 64-bit int) | updates `Z` | |
-| `sip` | `dest` | `dest = IP` (store instruction pointer) | | |
-| `sfl` | `dest` | `dest = FLAGS` (store flags byte) | | |
+| `sip` | `dest` | `dest = IP` (store instruction pointer) | - | |
+| `sfl` | `dest` | `dest = FLAGS` (store flags byte) | - | |
 | `jif` | `target mask` | jump if `FLAGS & mask` are non-zero (conditional jump) | - | mask tests the flag byte bits (Z/L/G/E) |
 | `jmp` | `target` | unconditional jump to target | - | `jmp label` |
 | `ppu` | `ID_loc NThreads Barrier` | Start the PPU with `NThreads` worker threads. Stop at `Barrier` address | - | For each spawned thread a sequential ID (starting from 0) is written to `ID_loc` (that address is *thread-local*).  |
