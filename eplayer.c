@@ -21,7 +21,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define VERSION "0.1.1"
+#define VERSION "0.1.2"
 
 //#define DEBUG
 #define LONG64B
@@ -370,7 +370,7 @@ static LOCTYPE input(int stream)
 
     switch (stream) {
     case MACHINE_IOCHAR:
-        data = getchar(); //FIXME: getchar is blocking until RET, need read() maybe?
+        read(1,(int*)&data,1);
         break;
 
     case MACHINE_IOUINT:

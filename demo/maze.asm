@@ -272,7 +272,7 @@ dd pcmove_ret 0
 
             movw posx newx
         :noteq2
-        jmp @pcmove_ret
+        ;jmp @pcmove_ret
 
         ;else if (map[(int)newy * MAPW + (int)posx] == 0) posy = newy;
         fti idx newy
@@ -351,37 +351,17 @@ dd walls_ret 0
 >walls
     ;PARALLEL for (int x = 0; x < SCREENW; x++) {
     ppu x %SCREENW %endwalls
-        clo camerax
-        clo deltadistx
-        clo deltadisty
-        clo raydirx
-        clo raydiry
-        clo stepx
-        clo stepy
-        clo mapx
-        clo mapy
-        clo side
-        clo sidedistx
-        clo sidedisty
-        clo perpwalldist
-        clo wallx
-        clo lineh
-        clo drawstart
-        clo texx
-        clo tscale
-        clo ty
-        clo idx
-        clo tmp
-        clo i
-
         ;float camerax = 2.0 * x / SCREENW - 1.0; // camerax in range [-1,1]
+        clo camerax
         itf camerax x
         muf camerax camerax %2.0
         dif camerax camerax %SCREENW_FLT
         suf camerax camerax %1.0
 
+        clo deltadistx
         movw deltadistx %1e30
         ;float raydirx = dirx + camx * camerax;
+        clo raydirx
         muf raydirx camx camerax
         adf raydirx raydirx dirx
         ;float deltadistx = (raydirx == 0) ? 1e30 : fabs(1.0 / raydirx);
@@ -390,8 +370,10 @@ dd walls_ret 0
         abf deltadistx deltadistx
         :izero1
 
+        clo deltadisty
         movw deltadisty %1e30
         ;float raydiry = diry + camy * camerax;
+        clo raydiry
         muf raydiry camy camerax
         adf raydiry raydiry diry
         ;float deltadisty = (raydiry == 0) ? 1e30 : fabs(1.0 / raydiry);
@@ -401,15 +383,20 @@ dd walls_ret 0
         :izero2
 
         ;int mapx = (int)posx;
+        clo mapx
         ftiw mapx posx
         itfw mapx mapx ; we'll need floats more frequently
         ;int mapy = (int)posy;
+        clo mapy
         ftiw mapy posy
         itfw mapy mapy
 
         ;int side = 0;   // 0 for vertical hit (NS wall), 1 for horizontal hit (EW wall)
+        clo side
         movb side %0
 
+        clo stepx
+        clo sidedistx
         ;if (raydirx < 0) {
         cmf raydirx %0.0
         jif nolow1 %3
@@ -431,6 +418,8 @@ dd walls_ret 0
         :next1
 
         ;if (raydiry < 0) {
+        clo sidedisty
+        clo stepy
         cmf raydiry %0.0
         jif nolow2 %3
             ;stepy = -1;
@@ -451,6 +440,8 @@ dd walls_ret 0
         :next2
 
         ;while (!hit) {
+        clo idx
+        clo tmp
         :loop1
             ;if (sidedistx < sidedisty) {
             cmf sidedistx sidedisty
@@ -486,6 +477,7 @@ dd walls_ret 0
         :endloop1
 
         ;if (side == 0)
+        clo perpwalldist
         cmpb side %0
         jif nozero1 %6
             ;perpwalldist = (mapx - posx + (1 - stepx) / 2.0) / raydirx;
@@ -506,14 +498,17 @@ dd walls_ret 0
         :next4
 
         ;int lineh = (int)(SCREENH / perpwalldist);
+        clo lineh
         dif tmp %SCREENH_FLT perpwalldist
         ftiw lineh tmp
 
         ;center the line on the screen
+        clo drawstart
         subw drawstart %SCREENH lineh
         divw drawstart drawstart %2
 
         ;if (side == 0)
+        clo wallx
         cmpb side %0
         jif nozero2 %6
             ;wallx = posy + perpwalldist * raydiry;
@@ -533,6 +528,7 @@ dd walls_ret 0
         suf wallx wallx tmp
 
         ;int texx = (int)(wallx * TEXW);
+        clo texx
         muf texx wallx %TEXW_FLT
         ftiw texx texx
 
@@ -554,9 +550,11 @@ dd walls_ret 0
         :next7
 
         ;float tscale = (float)TEXH / (float)lineh;
+        clo tscale
         itfw tscale lineh
         dif tscale %TEXH_FLT tscale
         ;float ty = 0;
+        clo ty
         movw ty %0.0
 
         ;if (drawstart < 0) {
@@ -572,6 +570,7 @@ dd walls_ret 0
         :noless2
 
         ;for (int i = drawstart; i <= drawend; i++) {
+        clo i
         mov i %0
         ;movw i drawstart
         :loop2
@@ -831,7 +830,25 @@ dd ptr 0
 .?8
 :main
 >main
-    ;TODO - entropy
+    ; print the banner and collect the entropy
+    out %welcome_msg %4
+
+    movw i %0
+    :eloop
+        cmpw i %6
+        jif endeloop %3
+
+        movw x %0
+        inpb x %0
+        jif eloop %0x80
+        mulw tmp i %8
+        shlw x x tmp
+        iorw seed seed x
+
+        addw i i %1
+        jmp eloop
+    :endeloop
+
 
     ; generate the map
     mov genmap_ret %past_gen
@@ -846,10 +863,11 @@ dd ptr 0
     mov pcrot_ret %render
     mov render_ret %gloop
 
-    ; first frame
-    jmp render
+    ; make sure user is ready
+    out %instruct_msg %4
 
     ; main game loop - process keyboard events and render
+    movw x %0
     :gloop
         inpb x %0
         jif gloop %0x80
@@ -891,7 +909,9 @@ dd ptr 0
 
     hlt
 
-db x 0
+dw x 0
+dw i 0
+dw tmp 0
 <
 
 db nl "\n"
@@ -1101,13 +1121,7 @@ db "       .      .      .    .           ..       ...    ..    .....     "
 db ".. . ......   ........... .........  .....     ...        .....       "
 db "  . ...          .....       ..     \0"
 
-STOP
+db welcome_msg "\nWelcome to The Maze - a simple textured raycaster implemented in EPIA assembly\n\n"
+db "Type in 6 letters or digits to seed the random numbers generator: \0"
 
-TODO - add entropy reader
-for (int i = 0; i < 6;) {
-    char x = 0;
-    read(1,&x,1);
-    if (!x) continue;
-    seed |= (uint32_t)x << i*8;
-    i++;
-}
+db instruct_msg "Great!\n\nControls: WASD - move around, Q - quit\n\nReady? Press any movement key to start!\0"
