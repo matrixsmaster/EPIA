@@ -25,6 +25,8 @@
 #QK8FULL !(QK8+4)
 #QK8_FLT !(QK8*4)
 
+#TOPP 0.9
+
 #MaxTokens 256
 #MaxInput 256
 #MaxTokAccum 128
@@ -1609,8 +1611,9 @@ dd ptr2 0
 dw g 0
 <
 
-:sampler
->sampler
+;int sampler_greedy(ftensor logits)
+:sampler_greedy
+>sampler_greedy
     mov ret @SP
     add SP SP %-8
     mov logs @SP
@@ -1654,6 +1657,274 @@ dw i 0
 dd ix 0
 <
 
+:rng
+>rng
+    mov ret @SP
+    movw x seed
+
+    ;x ^= x << 13;
+    shlw y x %13
+    xorw x x y
+    ;x ^= x >> 17;
+    shrw y x %17
+    xorw x x y
+    ;x ^= x << 5;
+    shlw y x %5
+    xorw x x y
+
+    movw seed x
+    movw @SP seed
+    jmp @ret
+
+dd ret 0
+dw x 0
+dw y 0
+dw seed 80085
+<
+
+;int sampler_topp(ftensor logits)
+:sampler_topp
+>sampler_topp
+    mov ret @SP
+    add SP SP %-8
+    mov logs @SP
+
+    ;memset(marks,0,g_m.vocab_size * sizeof(int));
+    mov @SP %marks
+    add SP SP %8
+    mov @SP %TLogitsSize
+    add SP SP %8
+    mov @SP %ret1
+    jmp memzero
+    :ret1
+
+    ;int n_maxlog = sampler_greedy(logits);
+    mov @SP logs
+    add SP SP %8
+    mov @SP %ret2
+    jmp sampler_greedy
+    :ret2
+    movw n_maxlog @SP
+
+    ;float maxlog = logits[n_maxlog];
+    mov idx %0
+    movw idx n_maxlog
+    mul idx idx %4
+    add idx idx logs
+    movw maxlog @idx
+
+    ;float sum = 0.0f;
+    movw sum %0.0
+
+    ;for (int i = 0; i < g_m.vocab_size; i++) {
+    mov idx logs
+    mov tpi %probs
+    mov i %0
+    :loop1
+        cmpw i %VocabSize
+        jif endloop1 %3
+
+        ;tp[i] = expf(logits[i] - maxlog);
+        suf tmp @idx maxlog
+        exp @tpi tmp
+
+        ;sum += tp[i];
+        adf sum sum @tpi
+
+        add i i %1
+        add tpi tpi %4
+        add idx idx %4
+        jmp loop1
+    :endloop1
+
+    ;if (sum <= 0.0f) goto topp_fallback;
+    cmf sum %0.0
+    jif fallback %5
+
+    ;for (int i = 0; i < g_m.vocab_size; i++)
+    mov tpi %probs
+    mov i %0
+    :loop2
+        cmpw i %VocabSize
+        jif endloop2 %3
+
+        ;tp[i] /= sum;
+        dif @tpi @tpi sum
+
+        add i i %1
+        add tpi tpi %4
+        jmp loop2
+    :endloop2
+
+    ;float cum = 0.0f;
+    movw cum %0.0
+    ;int cutoff = 0;
+    movw cutoff %0
+
+    ;while (cum < TOP_P) {
+    :loop3
+        cmf cum %TOPP
+        jif endloop3 %3
+
+        ;int best = -1;
+        movw best %-1
+        ;float bestval = -1e30;
+        movw bestval %-1e30
+
+        ;for (int i = 0; i < g_m.vocab_size; i++) {
+        mov i %0
+        mov idx %marks
+        mov tpi %probs
+        :loop4
+            cmpw i %VocabSize
+            jif endloop4 %3
+
+            ;if (marks[i]) continue;
+            cmpw @idx %0
+            jif nextloop4 %6
+
+            ;if (tp[i] > bestval) {
+            cmf @tpi bestval
+            jif nextloop4 %5
+
+                ;bestval = tp[i];
+                movw bestval @tpi
+                ;best = i;
+                movw best i
+
+            :nextloop4
+            add i i %1
+            add idx idx %4
+            add tpi tpi %4
+            jmp loop4
+        :endloop4
+
+        ;if (best < 0) break;
+        cmsw best %0
+        jif endloop3 %4
+
+        ;cum += bestval;
+        adf cum cum bestval
+        ;marks[best] = ++cutoff;
+        mov idx %0
+        movw idx best
+        mul idx idx %4
+        add idx idx %marks
+        addw cutoff cutoff %1
+        movw @idx cutoff
+
+        jmp loop3
+    :endloop3
+
+    ;DEBUG
+    outw cum %3
+    outb nl %0
+    outw cutoff %2
+    outb nl %0
+
+    ;if (!cutoff) goto topp_fallback;
+    cmpw cutoff %0
+    jif fallback %1
+
+    ;float r = ((float)rand() / (float)RAND_MAX) * cum;
+    mov @SP %retB1
+    jmp rng
+    :retB1
+    mov i %0
+    movw i @SP
+    itfd r i
+    dif r r %!(&((1<32)-1))
+    muf r r cum
+
+    ;DEBUG
+    outw r %3
+    outb nl %0
+
+    ;cum = 0;
+    movw cum %0.0
+    ;while (cum < r) {
+    :loop5
+        cmf cum r
+        jif endloop5 %3
+
+        ;int best = -1;
+        movw best %-1
+        ;int bestmark = g_m.vocab_size + 1;
+        movw bestval %!(VocabSize+1)
+
+        ;for (int i = 0; i < g_m.vocab_size; i++) {
+        mov i %0
+        mov idx %marks
+        :loop6
+            cmpw i %VocabSize
+            jif endloop6 %3
+
+            ;if (!marks[i]) continue;
+            cmpw @idx %0
+            jif nextloop6 %1
+
+            ;if (marks[i] < bestmark) {
+            cmpw @idx bestval
+            jif nextloop6 %3
+
+                ;bestmark = marks[i];
+                movw bestval @idx
+                ;best = i;
+                movw best i
+
+            :nextloop6
+            add i i %1
+            add idx idx %4
+            jmp loop6
+        :endloop6
+
+        ;if (best < 0) break;
+        cmsw best %0
+        jif endloop5 %4
+
+        ;DEBUG
+        outw best %1
+        outb nl %0
+
+        ;cum += tp[best];
+        mov idx %0
+        movw idx best
+        mul idx idx %4
+        add idx idx %probs
+        adf cum cum @idx
+
+        ;marks[best] = 0;
+        suu idx idx %probs
+        add idx idx %marks
+        movw @idx %0
+
+        ;n_maxlog = best;
+        movw n_maxlog best
+
+        jmp loop5
+    :endloop5
+
+:fallback
+    ;return n_maxlog;
+    movw @SP n_maxlog
+    jmp @ret
+
+dd ret 0
+dd logs 0
+
+dw maxlog 0
+dw n_maxlog 0
+dd i 0
+dd idx 0
+dd tpi 0
+dw tmp 0
+dw sum 0
+dw best 0
+dw bestval 0
+dw cutoff 0
+dw cum 0
+dw r 0
+<
 
 :main
 >main
@@ -1718,7 +1989,7 @@ dd ix 0
         mov @SP %logits
         add SP SP %8
         mov @SP %retB1
-        jmp sampler
+        jmp sampler_topp
         :retB1
 
         ;Get the token, advance position
@@ -1759,21 +2030,24 @@ db hexcodes "0123456789ABCDEF"
 db user_prompt "User: \0"
 db ai_prompt "\nAI: \0"
 
+; Any data below this line will not be saved in the final binary
 :break
 
-;Input string
+>main
+; Input string
 db input_str 0
 .+MaxInput
 
-;Prompt tokens array
+; Prompt tokens array
 .?8
 dw tokens 0
 .+TokenArrSize
 
-;Logits array
+; Logits array
 .?8
 db logits 0
 .+TLogitsSize
+<
 
 >inference
 ; Working Tensors Memory (mostly private to inference())
@@ -1819,10 +2093,19 @@ db t_att 0
 .+TAttSize
 <
 
+>sampler_topp
+.?8
+db probs 0
+.+TLogitsSize
+.?8
+db marks 0
+.+TLogitsSize
+<
+
 .?32
 :stack_begin
 dd 0
 .+StackSize
 
 db 1 ; canary
-.break ; returns IP back to before the big tensors, to minimize the output binary size
+.break ; returns IP back to before the runtime data section, to minimize the output binary size
